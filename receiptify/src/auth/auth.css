@@ -1,0 +1,87 @@
+
+.auth-container {
+  max-width: 400px;
+  margin: 60px auto;
+  padding: 2rem;
+  background: rgba(240, 248, 255, 0.9); 
+  border-radius: 12px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.auth-container h2 {
+  text-align: center;
+  margin-bottom: 1.5rem;
+  color: #2c3e50;
+}
+
+.auth-container form {
+  display: flex;
+  flex-direction: column;
+}
+
+.auth-container input[type="email"],
+.auth-container input[type="password"] {
+  padding: 12px 14px;
+  margin-bottom: 1rem;
+  border: 1px solid #cce0f5;
+  border-radius: 6px;
+  font-size: 1rem;
+  background-color: #f8fbfd;
+  transition: border-color 0.3s;
+}
+
+.auth-container input:focus {
+  border-color: #7dbbf1;
+  outline: none;
+}
+
+.auth-container button {
+  padding: 12px 14px;
+  background-color: #7dbbf1;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.auth-container button:hover {
+  background-color: #5ea8e5;
+}
+
+.auth-container .error {
+  color: #e74c3c;
+  font-size: 0.9rem;
+  text-align: center;
+  margin-top: 0.5rem;
+}
+
+.auth-switch {
+  text-align: center;
+  margin-top: 1rem;
+  font-size: 0.95rem;
+  color: #555;
+}
+
+.auth-switch a {
+  color: #5ea8e5;
+  text-decoration: none;
+  font-weight: 500;
+  margin-left: 5px;
+  transition: color 0.2s;
+}
+
+.auth-switch a:hover {
+  color: #3a91d82e;
+}
+
+.auth-link {
+  cursor: pointer; 
+  color: #5ea8e5;
+  font-weight: 500;
+  text-decoration: none;
+  margin-left: 4px;
+  transition: color 0.2s ease;
+}
