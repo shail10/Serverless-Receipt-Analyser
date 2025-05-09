@@ -1,0 +1,499 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+#AWS Lambda
+#AWS Beanstalk
+#AWS Step Functions
+#AWS Api Gateway
+#AWS Textract - AnalyzeDocument API
+#AWS Cloudtrail
+#AWS DynamdoDB
+#AWS S3
+
+Parameters:
+  InputS3BucketName:
+    Type: String
+    Default: receiptify-bucket
+    Description: Enter name of S3 Bucket for storing input images.
+
+  ApplicationName:
+    Type: String
+    Default: ReceiptifyFrontend
+    Description: Name of the Elastic Beanstalk application
+
+  EnvironmentName:
+    Type: String
+    Default: ReceiptifyFrontend-env
+    Description: Name of the Elastic Beanstalk environment
+
+  SolutionStackName:
+    Type: String
+    Default: '64bit Amazon Linux 2 v4.1.0 running Docker'
+    Description: The Elastic Beanstalk solution stack name for Docker
+
+  ApplicationCodeBucket:
+    Type: String
+    Default: my-react-app-deployment-bucket
+    Description: S3 bucket where the application code zip with Dockerfile is stored
+
+  ApplicationCodeKey:
+    Type: String
+    Default: receiptify.zip
+    Description: S3 key (filename) for the application code zip file
+
+  LabRoleARN:
+    Type: String
+    Description: ARN of the existing LabRole
+    Default: 'arn:aws:iam::303861616880:role/LabRole'
+
+Resources:
+  #Creates an S3 bucket with CORS settings and a notification to trigger the StartStepFunctionLambda on object upload(Image is uploaded in this bucket).
+  InputReceiptS3Bucket:
+    Type: 'AWS::S3::Bucket'
+    DependsOn:
+      - 'PermissionForS3ToInvokeStepFunctionLambda'
+    Properties:
+      BucketName: !Ref InputS3BucketName
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - PUT
+            AllowedOrigins:
+              - '*'
+            Id: myCORSRuleId1
+            MaxAge: 3600
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: 's3:ObjectCreated:Put'
+            Function: !GetAtt StartStepFunctionLambda.Arn
+
+  #Creates a REST API in API Gateway to handle image uploads, supporting binary media types.
+  ApiGateway:
+    Type: 'AWS::ApiGateway::RestApi'
+    Properties:
+      Name: 'ImageUploadAPI'
+      Description: 'API to upload images'
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      BinaryMediaTypes:
+        - 'multipart/form-data'
+        - 'image/*'
+
+  #Creates an API Gateway resource at the /upload path under the root API.
+  UploadImageApiGatewayResource:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      RestApiId: !Ref ApiGateway
+      PathPart: 'upload'
+
+  #Creates an API Gateway resource at the /receipts path under the root API.
+  GetReceiptsApiGatewayResource:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      RestApiId: !Ref ApiGateway
+      PathPart: 'receipts'
+
+  #Creates a POST method on the /upload API resource to invoke the ImageUploadLambda
+  UploadImageApiGatewayMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref ApiGatewayAuthorizer
+      HttpMethod: POST
+      ResourceId: !Ref UploadImageApiGatewayResource
+      RestApiId: !Ref ApiGateway
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ImageUploadLambda.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Headers: true
+        - StatusCode: 500
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Headers: true
+
+  #Creates a POST method on the /receipts API resource to invoke the GetReceiptsLambda
+  GetReceiptsApiGatewayMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref ApiGatewayAuthorizer
+      HttpMethod: POST
+      ResourceId: !Ref GetReceiptsApiGatewayResource
+      RestApiId: !Ref ApiGateway
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetReceiptsLambda.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Headers: true
+        - StatusCode: 500
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Headers: true
+
+  #Creates an OPTIONS method on the /upload API resource to enable CORS preflight requests
+  UploadImageApiGatewayMethodOptions:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref UploadImageApiGatewayResource
+      HttpMethod: OPTIONS
+      Integration:
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        Type: MOCK
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: 'Empty'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  #Creates an OPTIONS method on the /receipts API resource to enable CORS preflight requests
+  GetReceiptsApiGatewayMethodOptions:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref GetReceiptsApiGatewayResource
+      HttpMethod: OPTIONS
+      Integration:
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        Type: MOCK
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: 'Empty'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  #Creates an API Gateway deployment that ties together all defined methods and resources for production use.
+  Deployment:
+    Type: 'AWS::ApiGateway::Deployment'
+    DependsOn:
+      - UploadImageApiGatewayMethod
+      - UploadImageApiGatewayMethodOptions
+      - GetReceiptsApiGatewayMethod
+      - GetReceiptsApiGatewayMethodOptions
+    Properties:
+      RestApiId: !Ref ApiGateway
+      Description: Prod Deployment
+
+  #Creates a deployment stage named prod for the API Gateway to expose all defined resources and methods.
+  Prod:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      StageName: prod
+      Description: Prod Stage
+      RestApiId: !Ref ApiGateway
+      DeploymentId: !Ref Deployment
+
+  #Creates a Lambda function that starts the Step Function using the provided state machine ARN.
+  StartStepFunctionLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: StartStepFunction
+      Runtime: nodejs18.x
+      Handler: 'index.handler'
+      Role: arn:aws:iam::303861616880:role/LabRole
+      Timeout: 30
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref ImageProcessStateMachine
+      Code:
+        S3Bucket: receiptify-lambda
+        S3Key: start-step-function-lambda.zip
+
+  #Creates a Lambda function to handle image uploads and store them in the specified S3 bucket.
+  ImageUploadLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: 'index.handler'
+      Role: arn:aws:iam::303861616880:role/LabRole
+      FunctionName: 'ImageUploadFunction'
+      Runtime: 'nodejs18.x'
+      Environment:
+        Variables:
+          INPUT_BUCKET_NAME: !Ref InputS3BucketName
+      Code:
+        S3Bucket: receiptify-lambda
+        S3Key: upload-image-to-s3-lambda.zip
+      Timeout: 30
+
+  #Creates a Lambda function to process uploaded images (This lambda is called by the StepFunction that was defined).
+  ImageProcessLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: 'index.handler'
+      Role: arn:aws:iam::303861616880:role/LabRole
+      FunctionName: 'ImageProcessFunction'
+      Runtime: 'nodejs18.x'
+      Environment:
+        Variables:
+          INPUT_BUCKET_NAME: !Ref InputS3BucketName
+      Code:
+        S3Bucket: receiptify-lambda
+        S3Key: process-image-lambda.zip
+      Timeout: 30
+
+  #Creates a Lambda function to fetch processed receipt data from DynamoDB.
+  GetReceiptsLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: 'index.handler'
+      Role: arn:aws:iam::303861616880:role/LabRole
+      FunctionName: 'GetReceiptsFunction'
+      Runtime: 'nodejs18.x'
+      Code:
+        S3Bucket: receiptify-lambda
+        S3Key: fetch-data-from-dynamo-lambda.zip
+      Timeout: 30
+
+  #Grants S3 permission to invoke the StartStepFunctionLambda on object creation events.
+  PermissionForS3ToInvokeStepFunctionLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref StartStepFunctionLambda
+      Action: 'lambda:InvokeFunction'
+      Principal: 's3.amazonaws.com'
+      SourceArn: !Sub 'arn:aws:s3:::${InputS3BucketName}'
+
+  #Grants API Gateway permission to invoke the ImageUploadLambda function.
+  ImageUploadLambdaInvokeApiGateway:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !Ref ImageUploadLambda
+      Principal: 'apigateway.amazonaws.com'
+
+  #Grants API Gateway permission to invoke the GetReceiptsLambda function.
+  GetReceiptLambdaInvokeApiGateway:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !Ref GetReceiptsLambda
+      Principal: 'apigateway.amazonaws.com'
+
+  #Creates a Step Function that runs the ImageProcessLambda to process an image.
+  ImageProcessStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      RoleArn: !Ref LabRoleARN
+      DefinitionString: !Sub |
+        {
+          "StartAt": "ProcessImage",
+          "States": {
+            "ProcessImage": {
+              "Type": "Task",
+              "Resource": "${ImageProcessLambda.Arn}",
+              "End": true
+            }
+          }
+        }
+
+  #Creates a DynamoDB table named 'Receipts' with 'receipt_id' as the partition key using on-demand billing mode.
+  ReceiptsTable:
+    Type: 'AWS::DynamoDB::Table'
+    Properties:
+      TableName: 'Receipts'
+      AttributeDefinitions:
+        - AttributeName: 'receipt_id'
+          AttributeType: 'S'
+      KeySchema:
+        - AttributeName: 'receipt_id'
+          KeyType: 'HASH'
+      BillingMode: 'PAY_PER_REQUEST'
+
+  #Creates a versioned and encrypted S3 bucket to store AWS CloudTrail logs securely.
+  CloudTrailLogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'receiptify-cloudtrail-logs-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  #Attaches a bucket policy to allow AWS CloudTrail to write logs to the CloudTrailLogsBucket with proper ACL permissions.
+  CloudTrailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CloudTrailLogsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AWSCloudTrailAclCheck
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: 's3:GetBucketAcl'
+            Resource: !Sub 'arn:aws:s3:::${CloudTrailLogsBucket}'
+          - Sid: AWSCloudTrailWrite
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: 's3:PutObject'
+            Resource: !Sub 'arn:aws:s3:::${CloudTrailLogsBucket}/AWSLogs/${AWS::AccountId}/*'
+            Condition:
+              StringEquals:
+                's3:x-amz-acl': 'bucket-owner-full-control'
+
+  #Creates a multi-region CloudTrail named "ReceiptifyApiTrail" to log all management events to the specified S3 bucket with log file validation.
+  ReceiptifyCloudTrail:
+    Type: AWS::CloudTrail::Trail
+    DependsOn: CloudTrailBucketPolicy
+    Properties:
+      TrailName: 'ReceiptifyApiTrail'
+      IsLogging: true
+      IncludeGlobalServiceEvents: true
+      IsMultiRegionTrail: true
+      EnableLogFileValidation: true
+      S3BucketName: !Ref CloudTrailLogsBucket
+      EventSelectors:
+        - ReadWriteType: All
+          IncludeManagementEvents: true
+
+  #Creates an Elastic Beanstalk application to host the Receiptify frontend.
+  ElasticBeanstalkApplication:
+    Type: AWS::ElasticBeanstalk::Application
+    Properties:
+      ApplicationName: !Ref ApplicationName
+      Description: Frontend application for Receiptify
+
+  #Defines a version of the Elastic Beanstalk application using a Dockerized React frontend stored in S3.
+  ElasticBeanstalkApplicationVersion:
+    Type: AWS::ElasticBeanstalk::ApplicationVersion
+    Properties:
+      ApplicationName: !Ref ElasticBeanstalkApplication
+      Description: Docker application with React frontend
+      SourceBundle:
+        S3Bucket: !Ref ApplicationCodeBucket
+        S3Key: !Ref ApplicationCodeKey
+
+  #Creates an Elastic Beanstalk environment to deploy the Dockerized React frontend with environment variables pointing to API Gateway endpoints.
+  ElasticBeanstalkEnvironment:
+    Type: AWS::ElasticBeanstalk::Environment
+    Properties:
+      ApplicationName: !Ref ElasticBeanstalkApplication
+      Description: 'AWS Elastic Beanstalk Environment running Dockerized React frontend.'
+      EnvironmentName: prod
+      CNAMEPrefix: Receiptify
+      SolutionStackName: '64bit Amazon Linux 2 v4.1.0 running Docker'
+      VersionLabel: !Ref ElasticBeanstalkApplicationVersion
+      OptionSettings:
+        - Namespace: 'aws:elasticbeanstalk:environment'
+          OptionName: EnvironmentType
+          Value: SingleInstance
+        - Namespace: 'aws:autoscaling:launchconfiguration'
+          OptionName: IamInstanceProfile
+          Value: !Ref EBInstanceProfile
+        - Namespace: 'aws:elasticbeanstalk:environment'
+          OptionName: ServiceRole
+          Value: arn:aws:iam::303861616880:role/LabRole
+        - Namespace: 'aws:ec2:instances'
+          OptionName: InstanceTypes
+          Value: t3.medium
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: REACT_APP_IMAGE_UPLOAD_API_GATEWAY_URL
+          Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/upload'
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: REACT_APP_FETCH_RESULTS_API_GATEWAY_URL
+          Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/receipts'
+        # - Namespace: 'aws:elasticbeanstalk:application:environment'
+        #   OptionName: REACT_APP_STEP_FUNCTION_API_GATEWAY_URL
+        #   Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/start-processing'
+
+  EBInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - 'LabRole'
+
+  # THIS IS WHERE I WILL WRITE THE CODE FOR MY AUTHORIZATION LAMBDA. THIS WILL CREATE A LAMBDA AUTHORIZOR THAT WILL LATER BE INTEGRATED WITH FIREBASE TO PROVIDE USER AUTHENTICATION.
+
+  # Lambda function for the authorizer
+  AuthorizerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: AuthorizerFunction
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !Ref LabRoleARN
+      Code:
+        S3Bucket: receiptify-lambda
+        S3Key: authorizer-lambda.zip # Ensure this zip file exists in your S3 bucket with the authorizer code
+      Timeout: 10
+
+  # API Gateway authorizer referencing the Lambda function
+  ApiGatewayAuthorizer:
+    Type: AWS::ApiGateway::Authorizer
+    Properties:
+      Name: TokenAuthorizer
+      RestApiId: !Ref ApiGateway
+      Type: TOKEN
+      IdentitySource: method.request.header.Authorization
+      AuthorizerUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthorizerLambda.Arn}/invocations'
+      AuthorizerResultTtlInSeconds: 0 # Cache the result for 5 minutes
+
+  AuthorizerLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref AuthorizerLambda
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/authorizers/*'
+
+Outputs:
+  # ApiUrl:
+  #   Description: 'API Gateway URL'
+  #   Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/upload'
+
+  # ReceiptsApiUrl:
+  #   Description: 'API Gateway URL for retrieving receipts'
+  #   Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/receipts'
+
+  BeanstalkURL:
+    Description: 'URL for the Elastic Beanstalk environment'
+    Value: !GetAtt ElasticBeanstalkEnvironment.EndpointURL
