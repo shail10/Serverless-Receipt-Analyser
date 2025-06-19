@@ -53,23 +53,9 @@
 
 ---
 
-## 🛠️ Future Enhancements
-
-- User dashboard with analytics (QuickSight)
-- Multilingual OCR (Comprehend + Translate)
-- Email/SMS notifications (SNS/SES)
-- CI/CD (GitHub Actions + CodePipeline)
-- Multi-region deployment and event-driven microservices
-
----
-
 ## 📚 Author & Credits
 
-Built by **Shail Kardani** (B00991791)  
-Course Instructor: Prof. Lu Yang  
-[Project Report PDF](link-to-pdf-if-uploaded)  
-[Lucidchart Architecture](https://lucid.app/lucidchart/c3e3972c-450b-4bc8-a1a7-00a25815340f/view)  
-[Term Project GitLab Repo](https://git.cs.dal.ca/courses/2025-winter/csci-4145_5409/kardani/-/tree/main/term-project)
+Built by **Shail Kardani** 
 
 ---
 
