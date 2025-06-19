@@ -26,7 +26,7 @@
 - **Auth**: Firebase Authentication + custom Lambda Authorizer
 - **Monitoring & Security**: CloudTrail, HTTPS, token validation, and data encryption
 
-![Architecture Diagram](receiptify.png)
+![Architecture Diagram](receiptify-architecture.png)
 
 ---
 
